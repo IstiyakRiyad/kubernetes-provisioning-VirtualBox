@@ -10,9 +10,6 @@ LOAD_BALANCER_IP_START = 10
 MASTER_IP_START = 20
 WORKER_IP_START = 30
 
-
-
-
 # Setup dns
 def setup_dns(node)
     # Setup the hostname with IP address
@@ -48,7 +45,7 @@ def provision_kubernetes_node(node)
     setup_dns node
 
     # Install cert verification script
-    node.vm.provision "shell", inline: "ln -s /vagrant/ubuntu/cert_verify.sh /home/vagrant/cert_verify.sh"
+    node.vm.provision "file", source: "./ubuntu/cert-verify.sh", destination: "$HOME/cert-verify.sh"
 end
 
 
