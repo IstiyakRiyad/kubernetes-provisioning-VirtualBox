@@ -1,0 +1,131 @@
+
+
+# Number of master and the worker nodes:
+NUMBER_OF_MASTER_NODE = 2
+NUMBER_OF_WORKER_NODE = 2
+
+# Network Configuration:
+IP_NETWORK = "192.168.57"
+LOAD_BALANCER_IP_START = 10
+MASTER_IP_START = 20
+WORKER_IP_START = 30
+
+
+
+
+# Setup dns
+def setup_dns(node)
+    # Setup the hostname with IP address
+    node.vm.provision "setup-hosts", :type => "shell", :path => "ubuntu/setup-hosts.sh" do |s|
+        s.args = [
+            'eth1', 
+            LOAD_BALANCER_IP_START, 
+            MASTER_IP_START,
+            WORKER_IP_START,
+            NUMBER_OF_MASTER_NODE,
+            NUMBER_OF_WORKER_NODE
+        ]
+    end
+
+    # Setup DNS
+    node.vm.provision "setup-dns", :type => "shell", :path => "ubuntu/setup-dns.sh"
+end
+
+
+# Setup kuberneties
+def provision_kubernetes_node(node)
+    # Setup kubernetes cgroup and stop the ip6 address
+    node.vm.provision "setup-kernel", :type => "shell", :path => "ubuntu/setup-kernel.sh"
+
+    # Restart
+    node.vm.provision :shell do |shell|
+        shell.privileged = true
+        shell.inline = "echo Server restarting..."
+        shell.reboot = true
+    end
+
+    # Setup DNS
+    setup_dns node
+
+    # Install cert verification script
+    node.vm.provision "shell", inline: "ln -s /vagrant/ubuntu/cert_verify.sh /home/vagrant/cert_verify.sh"
+end
+
+
+
+Vagrant.configure("2") do |config|
+
+    # VM image name
+    config.vm.box = "generic/ubuntu2004"
+
+    # Stop update checking
+    config.vm.box_check_update = false
+
+
+    # Define Load Balancer VM
+    config.vm.define "loadbalancer" do |node|
+        # VM provider
+        node.vm.provider "virtualbox" do |vm|
+            vm.name = "kubernetes-loadbalancer"
+            vm.cpus = 1
+            vm.memory = 512
+            vm.check_guest_additions = false
+            vm.linked_clone = true
+        end
+
+        node.vm.hostname = "loadbalancer"
+        # Network
+        node.vm.network :private_network, ip: "#{IP_NETWORK}.#{LOAD_BALANCER_IP_START}"
+        node.vm.network "forwarded_port", host: 2000 + LOAD_BALANCER_IP_START, guest: 22
+
+        # DNS Setup
+        setup_dns node
+    end
+
+    
+    # Define All Master Nodes VM
+    (1..NUMBER_OF_MASTER_NODE).each do |index| 
+        # Define master
+        config.vm.define "master-#{index}" do |node|
+            node.vm.provider "virtualbox" do |vm|
+                vm.name = "kubernetes-master-#{index}"
+                vm.cpus = 1
+                vm.memory = 512
+                vm.check_guest_additions = false
+                vm.linked_clone = true
+            end
+
+            node.vm.hostname = "master-#{index}"
+            # Network
+            node.vm.network "private_network", ip: "#{IP_NETWORK}.#{MASTER_IP_START + index}"
+            node.vm.network "forwarded_port", guest: 22, host: 2000 + MASTER_IP_START + index
+
+            # Setup kubernetes and DNS
+            provision_kubernetes_node node
+        end
+    end
+
+
+    # Define All Worker Nodes VM
+    (1..NUMBER_OF_WORKER_NODE).each do |index|
+        # Define worker node
+        config.vm.define "worker-#{index}" do |node|
+            node.vm.provider "virtualbox" do |vm|
+                vm.name = "kubernetes-worker-#{index}"
+                vm.cpus = 1
+                vm.memory = 512
+                vm.check_guest_additions = false
+                vm.linked_clone = true
+            end
+
+            node.vm.hostname = "worker-#{index}"
+            # Network
+            node.vm.network "private_network", ip: "#{IP_NETWORK}.#{WORKER_IP_START + index}"
+            node.vm.network "forwarded_port", guest: 22, host: 2000 + WORKER_IP_START + index
+
+            # Setup kubernetes and DNS
+            provision_kubernetes_node node
+        end
+    end
+
+end
